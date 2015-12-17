@@ -1,6 +1,7 @@
-import sys, inspect
-from numbers import Number
-from errors import *
+import sys
+import inspect
+
+from bitforge import error
 
 
 # Below is a list of all *named* opcodes. Their values, integers in the
@@ -155,24 +156,25 @@ OP_RESERVED      = 80
 
 class Opcode(object):
 
-    class Error(BitforgeError):
+    class Error(error.BitforgeError):
         pass
 
-    class UnknownOpcodeName(Error, StringError):
+    class UnknownOpcodeName(Error, error.StringError):
         "No known operation named {string}"
 
-    class UnknownOpcodeNumber(Error, NumberError):
+    class UnknownOpcodeNumber(Error, error.NumberError):
         "No known operation numbered {number}"
 
-    class InvalidConstPushLength(Error, StringError):
+    class InvalidConstPushLength(Error, error.StringError):
         "No constant push opcode can push {length} bytes (only [1-75])"
 
-    class TypeError(Error, ObjectError):
+    class InvalidPushLength(Error, error.NumberError):
+        "No Opcode can push {number} bytes"
+
+    class TypeError(Error, error.ObjectError):
         "Opcodes are initialized from numbers and names, got object {object}"
 
-
     opcode_number_to_name = {}  # Filled after class definition
-
 
     def __init__(self, number):
         if not (0 <= number <= 255):
@@ -182,8 +184,10 @@ class Opcode(object):
 
     @property
     def name(self):
-        # NOTE: some opcodes lack names
-        return Opcode.opcode_number_to_name.get(self.number, None)
+        if self.is_const_push():
+            return "_PUSH_%d_BYTES" % self.number
+        else:
+            return Opcode.opcode_number_to_name[self.number]
 
     def is_push(self):
         return self.is_const_push() or self.is_var_push()
@@ -213,7 +217,6 @@ class Opcode(object):
     def __hash__(self):
         return hash(self.number)
 
-
     @staticmethod
     def for_number(n):
         if 0 <= n <= 16:
@@ -229,11 +232,29 @@ class Opcode(object):
         return Opcode(getattr(Opcode, name))
 
     @staticmethod
-    def const_push(length):
+    def const_push_for(length):
         if not (1 <= length <= 75):
             raise Opcode.InvalidConstPushLength(length)
 
         return Opcode(length)
+
+    @staticmethod
+    def var_push_for(length):
+        if length < 1:
+            raise Opcode.InvalidPushLength(length)
+
+        for opcode in [OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4]:
+            if length <= Opcode.data_length_max(opcode):
+                return opcode
+
+        raise Opcode.InvalidPushLength(length)
+
+    @staticmethod
+    def push_for(length):
+        if length <= 75:
+            return Opcode.const_push_for(length)
+        else:
+            return Opcode.var_push_for(length)
 
     @staticmethod
     def data_length_max(opcode):
@@ -259,7 +280,6 @@ class Opcode(object):
         }[opcode]
 
 
-
 # Walk the OP_* variables, mapping them to their names and creating Opcode objs:
 _module = sys.modules[__name__]
 
@@ -271,7 +291,7 @@ for name, number in inspect.getmembers(_module):
         # Replace integer values with actual Opcode instances:
         setattr(_module, name, Opcode(number))
 
-Opcode.opcode_number_to_name[OP_0] = 'OP_0' # shares number with OP_FALSE
-Opcode.opcode_number_to_name[OP_1] = 'OP_1' # shares number with OP_TRUE
+Opcode.opcode_number_to_name[OP_0] = 'OP_0'  # shares number with OP_FALSE
+Opcode.opcode_number_to_name[OP_1] = 'OP_1'  # shares number with OP_TRUE
 
-del _module # the expected use for this module is to import *
+del _module   # the expected use for this module is to import *
